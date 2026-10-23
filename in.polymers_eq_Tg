@@ -1,0 +1,212 @@
+# mpirun -np 12 --oversubscribe ../lammps/build/lmp -in in.polymers
+print "Starting in.polymers"
+
+suffix omp
+package omp 2
+
+# simulation format parameters
+units lj    #  Lennard-Jones units, essentially unitless
+dimension 3
+boundary p p p
+atom_style bond 
+
+#----------------------------------
+# C O N S T A N T S
+#----------------------------------
+
+variable patch_bond_r0 equal 0.25
+variable patch_gauss_B_width equal 10
+# variable patch_gauss_A_strength equal 50 # strength of Gaussian attraction between sticky patches # set by .sh script
+
+# simulation constants
+variable density equal 0.85
+# variable N_beads equal 24000 # set by .sh script
+# variable chain_length equal 30 # set by .sh script
+variable N_chains equal round(${N_beads} / ${chain_length})  # total number of polymers
+variable wall_size equal (${N_beads} / ${density})^(1/3) # box size to achieve desired density, scale by lj sigma of 1.3
+print "Calculated box size is ${wall_size}"
+
+# default form of molecule filename: "data/polymer_chainlength_{chain_length}_patchspacing_{patch_spacing}_backbone2patch_{backbone_to_patch}.molecule"
+# variable molecule_file string "data/polymer_chainlength_${chain_length}_patchspacing_${patch_spacing}_backbone2patch_${patch_bond_r0}.molecule"
+
+# current run setup
+variable output_traj equal 0
+variable output_traj_file string "data/dumps/eq_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.lammpstrj"
+variable output_msd equal 0
+variable output_msd_file string "logs/msd.dat"
+variable output_patch equal 0
+variable output_patch_file string "logs/patch_n_${patch_gauss_A_strength}_${patch_bond_r0}.dat"
+variable output_press equal 0
+variable output_press_file string "data/pressure/eqpress_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.dat"
+variable output_press_autocorr equal 0
+variable output_press_autocorr_file string "data/autocorrelation/eqautocorr_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.dat"
+variable random_patch_spacing equal 1
+
+
+variable log_file string "logs/log.eq_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.dat"
+variable restart_file string "data/restarts/restart.eq_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}"
+
+# variable random_seed equal 12345 # input from run.sh
+
+
+#-----------------------------------------------
+# S I M U L A T I O N      S E T U P
+#-----------------------------------------------
+# log file
+log ${log_file}
+
+# create simulation box
+region box block 0 ${wall_size} 0 ${wall_size} 0 ${wall_size}
+create_box 2 box bond/types 2 extra/bond/per/atom 4 extra/special/per/atom 20
+
+# polymer molecule definition
+mass 1 1.0 # backbone mass
+mass 2 1.0 # patch mass
+
+# intrachain bonds
+bond_style hybrid fene/omp harmonic/omp
+bond_coeff 1 fene/omp 30.0 1.5 1.0 1.0 # k, r0, epsilon, sigma for FENE bonds between backbone beads
+bond_coeff 2 harmonic/omp 1000 ${patch_bond_r0}  # stiff spring on patches
+special_bonds fene # no interactions between adjacent atoms, but excluded volume for 1-3 and 1-4 interactions
+
+# create atoms
+print "N_beads = ${N_beads}  N_chains = ${N_chains} random_seed = ${random_seed}"
+if "${random_patch_spacing} == 1" then &
+    "jump SELF random_spacing_loop"
+    else &
+    "jump SELF fixed_spacing_loop"
+      
+
+label random_spacing_loop
+print 'Random patch spacing is ON'
+variable a loop ${N_chains}
+label loop
+shell python generate_molecule.py --chain_length ${chain_length} --patch_spacing ${patch_spacing} --backbone_to_patch ${patch_bond_r0} --random ${random_patch_spacing} --filename ${molecule_file}
+molecule $a ${molecule_file}
+create_atoms 0 random 1 $(v_random_seed + 13 * v_a) box mol $a $(v_random_seed + 13 * v_a)
+next a
+jump SELF loop
+jump SELF end_spacing_loop
+
+label fixed_spacing_loop
+print 'Random patch spacing is OFF'
+molecule polymer ${molecule_file}
+create_atoms 0 random ${N_chains} 12345 box mol polymer ${random_seed}
+
+label end_spacing_loop
+
+# group definitions
+group monomer type 1
+group patch type 2
+
+# for visualization in OVITO
+write_data data/dumps/initial_config_chainlength_${chain_length}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.dat
+
+# neighbor list settings
+neighbor 0.3 bin
+neigh_modify every 1 delay 0 check yes
+comm_modify cutoff 3.5
+
+#-----------------------------------------------
+# I N I T I A L      R E L A X A T I O N
+#-----------------------------------------------
+
+dump eq all custom 1000000 ${output_traj_file} id type mol x y z ix iy iz
+restart 10000 ${restart_file} ${restart_file}
+
+compute cc1 all chunk/atom molecule
+compute myChunk all gyration/chunk cc1
+fix gyration all ave/time 1000 1 1000 c_myChunk file data/r_gyration.out mode vector
+
+# fix limit all nve/limit 0.02
+# run 200
+
+# energy minimization to relax overlaps at beginning
+print "30 Minimization start"
+min_style cg             # fire more robust than cg
+minimize 1.0e-6 1.0e-8 20000 200000
+
+# soft potential
+pair_style soft/omp 1.12246
+pair_coeff 1 1 4.0
+pair_coeff 1 2 0.0
+pair_coeff 2 2 0.0 
+# variable prefactor equal ramp(4, 800) # linearly ramp prefactor
+# fix soft all adapt 1 pair soft a * * v_prefactor
+
+fix 1 all langevin 1.0 1.0 0.5 ${random_seed} # Langevin thermostat, temp 1.0, damping parameter $(200.0*dt), random seed 12345
+fix 2 all nve # NVE ensemble for production run, but use Langevin thermostat
+fix damp all momentum 50 linear 1 1 1 # zero out momentum every 50 steps to prevent drifting
+timestep 0.001
+thermo 100
+
+# run soft w/ 4.0
+run 200000
+
+# run soft w/ 20.0
+pair_coeff 1 1 20.0
+pair_coeff 1 2 0.0
+pair_coeff 2 2 0.0 
+run 200000
+
+# run soft w/ 100.0
+pair_coeff 1 1 100.0
+pair_coeff 1 2 0.0
+pair_coeff 2 2 0.0 
+run 200000
+
+pair_style hybrid/overlay soft/omp 1.12246 lj/cut/omp 1.12246205
+pair_coeff * * soft/omp 0.0
+pair_coeff 1 1 lj/cut/omp 0.05 1.0  # WCA between backbone beads
+run 500000
+
+unfix damp
+
+# Let's try getting rid of this and just using the following part
+# pair_style lj/cut 1.12246
+# pair_coeff 1 1 1.0 1.0
+# pair_coeff 1 2 0.0 1.0
+# pair_coeff 2 2 0.0 1.0
+# run 500000
+
+unfix 1
+unfix 2
+
+print "Soft potential relaxation complete"
+
+#------------------------------------------------------------
+# T H E R M A L      E Q U I L I B R A T I O N
+#------------------------------------------------------------
+bond_style hybrid fene/omp harmonic/omp
+bond_coeff 1 fene/omp 30.0 1.5 1.0 1.0 # k, r0, epsilon, sigma for FENE bonds between backbone beads
+bond_coeff 2 harmonic/omp 10000 ${patch_bond_r0}  # stiff spring on patches
+special_bonds fene # no interactions between adjacent atoms, but excluded volume for 1-3 and 1-4 interactions
+
+# interatomic potentials (non-bonded)
+pair_style hybrid/overlay lj/cut/omp 1.12246205 gauss/omp 2.0 # cutoff for both at 2.0
+pair_coeff 1 1 lj/cut/omp 1.0 1.0  # WCA between backbone beads
+pair_coeff 1 2 lj/cut/omp 0.0 1.0  # WCA between backbone and patch
+pair_coeff 2 2 lj/cut/omp 0.0 1.0 # no WCA between patch
+pair_modify shift yes # shift to zero at cutoff
+pair_coeff 2 2 gauss/omp 0 0 2.0 # Gaussian attraction off for majority of EQ
+
+# initial velocities for equilibration
+timestep 0.005
+# velocity all create 1.0 1 # initial temperature 1.0, random seed 1
+
+fix 1 all langevin 1.0 1.0 200.0 ${random_seed} # Langevin thermostat, temp 1.0, damping parameter $(200.0*dt), random seed 12345
+fix 2 all nve/omp # NVE ensemble for production run, but use Langevin thermostat for equilibration to speed up convergence
+
+# initial setup
+thermo 100
+run 500000
+
+bond_style hybrid fene/omp harmonic/omp
+bond_coeff 1 fene/omp 30.0 1.5 1.0 1.0 # k, r0, epsilon, sigma for FENE bonds between backbone beads
+bond_coeff 2 harmonic/omp 30000 ${patch_bond_r0}  # stiff spring on patches
+special_bonds fene # no interactions between adjacent atoms, but excluded volume for 1-3 and 1-4 interactions
+
+pair_coeff 2 2 gauss/omp ${patch_gauss_A_strength} ${patch_gauss_B_width} 2.0 # Gaussian attraction between patches turned on
+run 100000
+
+print "Equilibration done"

@@ -1,0 +1,123 @@
+print "Starting in.polymers"
+
+suffix omp
+package omp 2
+
+#----------------------------------
+# C O N S T A N T S
+#----------------------------------
+
+variable patch_bond_r0 equal 0.25
+variable patch_gauss_B_width equal 10
+# variable patch_gauss_A_strength equal 50 # strength of Gaussian attraction between sticky patches # set by .sh script
+
+# simulation constants
+variable density equal 0.85
+# variable N_beads equal 24000 # set by .sh script
+# variable chain_length equal 30 # set by .sh script
+variable N_chains equal round(${N_beads} / ${chain_length})  # total number of polymers
+variable wall_size equal (${N_beads} / ${density})^(1/3)  # box size to achieve desired density
+print "Calculated box size is ${wall_size}"
+
+# default form of molecule filename: "data/polymer_chainlength_{chain_length}_patchspacing_{patch_spacing}_backbone2patch_{backbone_to_patch}.molecule"
+variable molecule_file string "data/polymer_chainlength_${chain_length}_patchspacing_${patch_spacing}_backbone2patch_${patch_bond_r0}.molecule"
+
+# # current run setup
+# variable output_traj equal 0
+# variable output_traj_file string "data/dumps/prod_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.bin"
+# variable output_traj_patch equal 0
+# variable output_traj_patch_file string "data/dumps/prodpatch_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.bin"
+# variable output_msd equal 0
+# variable output_msd_file string "logs/msd.dat"
+# variable output_patch equal 0
+# variable output_patch_file string "data/patches/prodpatch_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.bin"
+# variable output_press equal 0
+# variable output_press_file string "data/pressures/prodpress_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.dat"
+# variable output_press_autocorr equal 1
+# variable output_press_autocorr_file string "data/autocorrelation/prodautocorr_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.dat"
+
+variable log_file string "logs/log.prod_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}"
+variable restart_file string "data/restarts/restart.eq_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}"
+
+# variable random_seed equal 12345 # input from run.sh
+
+
+#-----------------------------------------------
+# S I M U L A T I O N      S E T U P
+#-----------------------------------------------
+# log file
+log ${log_file}
+
+# create atoms
+print "N_beads = ${N_beads}  N_chains = ${N_chains}  gauss_A = ${patch_gauss_A_strength}  gauss_B = ${patch_gauss_B_width}  random_seed = ${random_seed}"
+# create_atoms 0 random ${N_chains} 12345 box mol polymer ${random_seed}
+read_restart ${restart_file} # read in the final configuration from the equilibration run
+
+reset_timestep 0
+
+# group definitions
+group monomer type 1
+group patch type 2
+
+bond_style hybrid fene/omp harmonic/omp
+bond_coeff 1 fene/omp 30.0 1.5 1.0 1.0 # k, r0, epsilon, sigma for FENE bonds between backbone beads
+bond_coeff 2 harmonic/omp 30000 0.25  # stiff spring on patches
+special_bonds fene # no interactions between adjacent atoms, but excluded volume for 1-3 and 1-4 interactions
+
+# neighbor list settings
+neighbor 0.5 bin #TODO return this to 0.3 if things break
+neigh_modify every 1 delay 0 check yes
+comm_modify cutoff 3.5
+
+# interatomic potentials (non-bonded)
+pair_style hybrid/overlay lj/cut/omp 1.12246205 gauss/omp 2.0 # cutoff for both at 2.0
+pair_coeff 1 1 lj/cut/omp 1.0 1.0  # WCA between backbone beads
+pair_coeff 1 2 lj/cut/omp 0.0 1.0  # WCA between backbone and patches
+pair_coeff 2 2 lj/cut/omp 0.0 1.0 # no WCA between patches
+pair_modify shift yes # shift to zero at cutoff
+pair_coeff 2 2 gauss/omp ${patch_gauss_A_strength} ${patch_gauss_B_width} 2.0 # Gaussian attraction between sticky patches
+
+# fix langevin_int all langevin 1.0 1.0 200.0 ${random_seed} # Langevin thermostat, temp 1.0, damping parameter $(200.0*dt), random seed 12345
+# fix nve_int all nve/omp # switch to NVE ensemble
+#-----------------------------------------------
+# B A R O S T A T T I N G
+#-----------------------------------------------
+# barostatting
+run 0
+variable Tstart equal 1.0
+variable Tend equal 1.5
+
+fix npt_int all npt temp ${Tstart} ${Tend} 0.5 iso 1.0 1.0 5.0
+
+#-----------------------------------------------
+# P R O D U C T I O N     R U N 
+#-----------------------------------------------
+
+# experiment run 
+# compute temp_com all temp/com
+# # centre-of-mass msd calculation
+# compute mol_chunks all chunk/atom molecule
+# compute mol_msd all msd/chunk mol_chunks
+# fix msd_out all ave/time 1000 1 1000 c_mol_msd file data/msd/prodmsd_chainlength_${chain_length}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.dat mode vector
+
+timestep 0.002
+thermo_style custom step temp press vol density epair emol etotal
+thermo 1000
+
+# Record temperature, pressure, volume, and density during heating
+variable outT equal temp
+variable outP equal press
+variable outV equal vol
+variable outRho equal density
+
+variable Tg_file string "data/Tg_chainlength_${chain_length}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_seed_${random_seed}.dat"
+
+fix Tg_output all ave/time 100 10 1000 &
+    v_outT v_outP v_outV v_outRho file ${Tg_file}
+
+run 5000000
+
+unfix Tg_output
+unfix npt_int
+
+print "Ending in.polymers_prod_Tg simulation"
