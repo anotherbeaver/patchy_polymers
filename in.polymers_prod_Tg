@@ -36,8 +36,8 @@ variable molecule_file string "data/polymer_chainlength_${chain_length}_patchspa
 # variable output_press_autocorr equal 1
 # variable output_press_autocorr_file string "data/autocorrelation/prodautocorr_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}.dat"
 
-variable log_file string "logs/log.prod_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}"
-variable restart_file string "data/restarts/restart.eq_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}"
+variable log_file string "logs/log.Tg_prod_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}"
+variable restart_file string "data/restarts/restart.Tg_eq_chainlength_${chain_length}_patchspacing_${patch_spacing}_N_beads_${N_beads}_gaussA_${patch_gauss_A_strength}_r0_${patch_bond_r0}_gaussB_${patch_gauss_B_width}_seed_${random_seed}"
 
 # variable random_seed equal 12345 # input from run.sh
 
@@ -84,7 +84,7 @@ pair_coeff 2 2 gauss/omp ${patch_gauss_A_strength} ${patch_gauss_B_width} 2.0 # 
 #-----------------------------------------------
 # barostatting
 run 0
-variable Tstart equal 1.0
+variable Tstart equal 0.2
 variable Tend equal 1.5
 
 fix npt_int all npt temp ${Tstart} ${Tend} 0.5 iso 1.0 1.0 5.0

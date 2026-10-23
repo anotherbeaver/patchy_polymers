@@ -1,7 +1,7 @@
 #!/bin/bash
 
 LAMMPS=lmp
-INPUTEQ=in.polymers_eq
+INPUTEQ=in.polymers_eq_Tg
 INPUTPROD=in.polymers_prod_Tg
 LOGDIR=logs
 DATADIR=data
@@ -34,8 +34,22 @@ for index in "${!patch_strength_list[@]}"; do
 
   echo "Running Tg: N=${N}, N_beads=${N_beads}, patch_spacing=${patch_spacing}, patch_strength=${patch_strength}, random_seed=${random_seed}"
 
-  export OMP_NUM_THREADS=2
+  export OMP_NUM_THREADS=4
   export OMP_PROC_BIND=close
+
+  python3 generate_molecule.py \
+    --chain_length ${N} \
+    --patch_spacing ${patch_spacing} \
+    --backbone_to_patch 0.25
+
+  mpirun -n 8 ${LAMMPS} -in "${INPUTEQ}" \
+    -sf omp \
+    -pk omp ${OMP_NUM_THREADS} \
+    -var chain_length "${N}" \
+    -var N_beads "${N_beads}" \
+    -var patch_spacing "${patch_spacing}" \
+    -var patch_gauss_A_strength "${patch_strength}" \
+    -var random_seed "${random_seed}"
 
   mpirun -n 8 ${LAMMPS} -in "${INPUTPROD}" \
     -sf omp \
